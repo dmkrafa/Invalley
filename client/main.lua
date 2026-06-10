@@ -199,7 +199,7 @@ local function StartVehicleChase(unitId)
         -- Iniciar perseguição com TaskVehicleChase
         TaskVehicleChase(driver, GetPlayerPed())
         SetDriverAbility(driver, 1.0)
-        SetDriveAggressively(driver, 1.0)
+        SetDriveTaskDrivingStyle(driver, 262144 + 2)  -- Agressivo
         
         -- Garantir que o motorista está no banco do motorista
         if GetPedInVehicleSeat(unit.vehicle, -1) ~= driver then
@@ -291,6 +291,7 @@ local function ReturnToVehicle(unitId)
             if i == 1 then
                 TaskVehicleChase(officer.ped, GetPlayerPed())
                 SetDriverAbility(officer.ped, 1.0)
+                SetDriveTaskDrivingStyle(officer.ped, 262144 + 2)
             end
         end
     end
