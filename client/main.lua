@@ -89,14 +89,6 @@ local function LoadAnimation(dictName)
 end
 
 ---------------------------------------------------------------------
--- LIBERAR MODELO
----------------------------------------------------------------------
-
-local function ReleaseModel(modelHash)
-    RemoveModelRequest(GetHashKey(modelHash))
-end
-
----------------------------------------------------------------------
 -- SPAWN DE UNIDADE POLICIAL
 ---------------------------------------------------------------------
 
@@ -159,9 +151,6 @@ local function SpawnPoliceUnit(data)
             })
         end
     end
-    
-    ReleaseModel(vehicleModel)
-    ReleaseModel(pedModel)
     
     local unit = {
         unitId = unitId,
