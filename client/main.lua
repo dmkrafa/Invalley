@@ -448,6 +448,14 @@ local function ArrestPlayer(unitId, crimeType, jailTime)
 end
 
 ---------------------------------------------------------------------
+-- FUNÇÃO VERIFICAR SE ESTÁ DISPARANDO
+---------------------------------------------------------------------
+
+local function IsCharacterShooting(ped)
+    return IsPedShooting(ped)
+end
+
+---------------------------------------------------------------------
 -- LOOP PRINCIPAL DE PERSEGUIÇÃO
 ---------------------------------------------------------------------
 
@@ -629,14 +637,6 @@ CreateThread(function()
         end
     end
 end)
-
----------------------------------------------------------------------
--- FUNÇÃO AUXILIAR
----------------------------------------------------------------------
-
-local function IsCharacterShooting(ped)
-    return IsPedShooting(ped)
-end
 
 ---------------------------------------------------------------------
 -- PLAYER LOADED
