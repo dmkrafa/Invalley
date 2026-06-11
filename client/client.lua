@@ -192,6 +192,7 @@ local function SpawnPoliceUnit(data)
     SetVehicleDirtLevel(vehicle, 0.0)
     SetEntityAsMissionEntity(vehicle, true, true)
     SetVehicleSiren(vehicle, true)
+    SetVehicleEngineOn(vehicle, true, true, false)
     
     local policeOfficers = {}
     
@@ -207,6 +208,7 @@ local function SpawnPoliceUnit(data)
             SetPedRelationshipGroupHash(ped, CopRelationshipGroup)
             
             TaskWarpPedIntoVehicle(ped, vehicle, seatIndex)
+            Wait(500)
             
             -- Configurações de combate
             SetPedCombatAttributes(ped, 46, true)
@@ -238,7 +240,8 @@ local function SpawnPoliceUnit(data)
         createdAt = GetGameTimer(),
         chaseStarted = false,
         playerDistance = 999.0,
-        pursuitActive = false
+        pursuitActive = false,
+        arrestInProgress = false
     }
     
     ActiveUnits[unitId] = unit
@@ -275,17 +278,23 @@ local function StartVehicleChase(unitId)
     if driverOfficer and DoesEntityExist(driverOfficer.ped) then
         local driver = driverOfficer.ped
         
+        -- Garante que está no banco do motorista
         if GetPedInVehicleSeat(unit.vehicle, -1) ~= driver then
             TaskWarpPedIntoVehicle(driver, unit.vehicle, -1)
+            Wait(500)
         end
         
         ClearPedTasks(driver)
+        Wait(200)
         
+        -- Inicia perseguição agressiva
         TaskVehicleChase(driver, GetLocalPlayerPed())
         SetTaskVehicleChaseBehaviorFlag(driver, 1, true)
         SetTaskVehicleChaseIdealPursuitDistance(driver, 5.0)
         SetDriverAbility(driver, Config.PoliceAI.DriverAbility or 1.0)
         SetDriveTaskDrivingStyle(driver, 262144 + 2)
+        
+        DebugPrint("Driver assigned to chase for unit:", unitId)
     end
     
     -- Outros policiais preparam para combate
@@ -326,7 +335,7 @@ local function TransitionToFootPursuit(unitId)
             TaskLeaveVehicle(officer.ped, unit.vehicle, 16)
             officer.isOnFoot = true
             
-            Wait(1000)
+            Wait(800)
         end
     end
 end
@@ -353,7 +362,7 @@ local function ReturnToVehicle(unitId)
             local seat = officer.isDriver and -1 or (i - 2)
             TaskEnterVehicle(officer.ped, unit.vehicle, 10000, seat, 1.0, 1)
             
-            Wait(1000)
+            Wait(800)
         end
     end
     
@@ -447,9 +456,11 @@ local function ArrestPlayer(unitId, crimeType, jailTime)
     local unit = ActiveUnits[unitId]
     local playerPed = GetLocalPlayerPed()
     
-    if not unit or not unit.officers or #unit.officers == 0 then 
+    if not unit or not unit.officers or #unit.officers == 0 or unit.arrestInProgress then 
         return 
     end
+    
+    unit.arrestInProgress = true
     
     DebugPrint("Arresting player... Crime:", crimeType, "Jail Time:", jailTime)
     
@@ -462,6 +473,7 @@ local function ArrestPlayer(unitId, crimeType, jailTime)
     end
     
     if not policeOfficer then 
+        unit.arrestInProgress = false
         return 
     end
     
@@ -471,10 +483,14 @@ local function ArrestPlayer(unitId, crimeType, jailTime)
     PlayHandcuffAnimation(policeOfficer, playerPed)
     PlayPoliceDialogue(policeOfficer, crimeType, jailTime)
     
-    Wait(3000)
+    Wait(1000)
     
+    -- Enviar ao servidor para prender
     TriggerServerEvent('npcpolice:server:arrestPlayer')
     
+    Wait(2000)
+    
+    -- Limpar unidade
     if unit.vehicle and DoesEntityExist(unit.vehicle) then
         DeleteEntity(unit.vehicle)
     end
@@ -519,63 +535,94 @@ local function UpdateUnitBehavior()
                     primaryOfficerPed = officer.ped 
                 end
                 
+                -- Comportamento baseado no estado do jogador
                 if isPlayerRendered then
+                    -- Jogador rendido: guarda arma e se aproxima
                     SetCurrentPedWeapon(officer.ped, GetHashKey("WEAPON_UNARMED"), true)
-                    ClearPedTasks(officer.ped)
                     
                     if unit.state == "foot_pursuit" then
-                        TaskGoToEntity(officer.ped, playerPed, -1, 2.0, 2.0, 1073741824, 0)
+                        if not officer.isDriver then
+                            TaskGoToEntity(officer.ped, playerPed, -1, 2.0, 2.0, 1073741824, 0)
+                        end
                     end
                 elseif isPlayerHostile then
+                    -- Jogador hostil: combate agressivo
                     SetPedCombatAttributes(officer.ped, 46, true)
                     SetPedCombatAttributes(officer.ped, 3, true)
                     SetPedCombatAttributes(officer.ped, 5, true)
                 else
+                    -- Jogador fugindo: perseguir
                     if unit.state == "foot_pursuit" then
-                        TaskGoToEntity(officer.ped, playerPed, -1, 3.0, 2.5, 1073741824, 0)
+                        if not officer.isDriver then
+                            TaskGoToEntity(officer.ped, playerPed, -1, 3.0, 2.5, 1073741824, 0)
+                        end
                     end
                 end
             end
         end
         
+        -- Se não houver oficiais ativos, remove a unidade
         if activeOfficerCount == 0 then
             TriggerServerEvent('ai-police:server:unitDestroyed', unitId)
             ActiveUnits[unitId] = nil
             goto continue
         end
         
-        local leaderCoords = GetEntityCoords(primaryOfficerPed or unit.vehicle)
+        -- Calcula distância até o jogador
+        local leaderCoords = primaryOfficerPed and GetEntityCoords(primaryOfficerPed) or GetEntityCoords(unit.vehicle)
         unit.playerDistance = GetDistance(playerCoords, leaderCoords)
         
+        -- Remove spawning se saiu do raio de distância
         if unit.spawning and unit.playerDistance > Config.PoliceAI.VehicleChaseDistance then
             unit.spawning = false
         end
         
+        -- Transições de estado
         if playerInVehicle and unit.state == "foot_pursuit" then
             ReturnToVehicle(unitId)
         elseif not playerInVehicle and unit.state == "vehicle_chase" and unit.playerDistance < Config.PoliceAI.FootChaseDistance then
             TransitionToFootPursuit(unitId)
         end
         
+        -- Inicia perseguição se ainda não começou
         if not unit.chaseStarted and not unit.spawning then
             StartVehicleChase(unitId)
         end
         
-        if unit.state == "foot_pursuit" and unit.playerDistance < Config.PoliceAI.ArrestDistance then
+        -- ARREST: Verifica se deve prender o jogador
+        if unit.state == "foot_pursuit" and unit.playerDistance <= Config.PoliceAI.ArrestDistance and not unit.arrestInProgress then
+            -- Prende se estiver rendido OU se não estiver atacando
             if isPlayerRendered or not isPlayerHostile then
+                -- Obtém informações do servidor
                 local lastCrime = "Atividade Suspeita"
                 local jailTime = 5
                 
-                if exports[GetCurrentResourceName()] then
-                    lastCrime = exports[GetCurrentResourceName()]:GetLastCrime() or "Atividade Suspeita"
-                    jailTime = exports[GetCurrentResourceName()]:GetJailTime() or 5
+                -- Tenta usar exports do servidor
+                if exports['NpcPolice'] then
+                    local successCrime, crime = pcall(function()
+                        return exports['NpcPolice']:GetLastCrime()
+                    end)
+                    
+                    local successTime, time = pcall(function()
+                        return exports['NpcPolice']:GetJailTime()
+                    end)
+                    
+                    if successCrime and crime then
+                        lastCrime = crime
+                    end
+                    
+                    if successTime and time then
+                        jailTime = time
+                    end
                 end
                 
+                DebugPrint("Arrest triggered for unit:", unitId, "Crime:", lastCrime, "Jail Time:", jailTime)
                 ArrestPlayer(unitId, lastCrime, jailTime)
                 break
             end
         end
         
+        -- Despawn se jogador fugir muito longe
         if unit.playerDistance > 250.0 then
             TriggerServerEvent('ai-police:server:unitDestroyed', unitId)
             ActiveUnits[unitId] = nil
@@ -591,7 +638,9 @@ local function UpdateUnitBehavior()
             "Officers:",
             activeOfficerCount,
             "Spawning:",
-            unit.spawning
+            unit.spawning,
+            "Arrest:",
+            unit.arrestInProgress
         )
         
         ::continue::
@@ -605,6 +654,7 @@ end
 ---------------------------------------------------------------------
 
 RegisterNetEvent('ai-police:client:spawnUnit', function(data)
+    DebugPrint("Event received: spawnUnit")
     SpawnPoliceUnit(data)
 end)
 
@@ -635,6 +685,8 @@ RegisterNetEvent('ai-police:client:removeUnit', function(unitId)
 end)
 
 RegisterNetEvent('ai-police:client:clearUnits', function()
+    DebugPrint("Clearing all units")
+    
     for unitId, unit in pairs(ActiveUnits) do
         if unit.vehicle and DoesEntityExist(unit.vehicle) then
             DeleteEntity(unit.vehicle)
